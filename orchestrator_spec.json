@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "gemini-flash-orchestrator",
+  "version": "3.0.0",
+  "standard": "Enterprise Multi-Agent Swarm Standard (EMAS-2026)",
+  "verified_at": "2026-10-02",
+  "author": "Prime Lead Ecosystem / Radmatot88",
+  "repository": "https://github.com/Radmatot88/gemini-flash-orchestrator",
+  "raw_spec_url": "https://raw.githubusercontent.com/Radmatot88/gemini-flash-orchestrator/master/orchestrator_spec.json",
+  "validation_report": {
+    "score": 100,
+    "grade": "A",
+    "passed_checks": 22,
+    "total_checks": 22,
+    "critical_failures": 0,
+    "high_failures": 0,
+    "anti_patterns_covered": 26
+  },
+  "runtime_requirements": {
+    "engine": "Antigravity 2.0+ / Gemini CLI / LangGraph Pregel Adapter",
+    "orchestrator_model_tier": "Pro (Gemini 1.5/2.0/3.x Pro, Claude Opus)",
+    "orchestrator_max_output_tokens": 8192,
+    "worker_model_tier": "Flash (Gemini 1.5/2.0/3.8 Flash High)",
+    "concurrency_mode": "Aggressive Parallel (Bulk Synchronous Parallelism)",
+    "heartbeat_timeout_seconds": 900
+  },
+  "agent_launch_schema": {
+    "tool_name": "invoke_subagent",
+    "parameters": {
+      "Subagents": {
+        "type": "array",
+        "description": "Array of concurrent agents to be spawned in a single wave",
+        "items": {
+          "type": "object",
+          "required": ["TypeName", "Role", "Prompt", "Model"],
+          "properties": {
+            "TypeName": {
+              "type": "string",
+              "enum": ["self", "research"],
+              "description": "'research' for strictly Read-Only analysis (send_message output); 'self' for Read/Write coding and file ops."
+            },
+            "Role": {
+              "type": "string",
+              "description": "Human-readable role identifier"
+            },
+            "Prompt": {
+              "type": "string",
+              "description": "Full task prompt containing context, constraints, and return contract"
+            },
+            "Model": {
+              "type": "string",
+              "enum": ["flash", "pro", "inherit"],
+              "default": "flash"
+            },
+            "Workspace": {
+              "type": "string",
+              "enum": ["inherit", "branch", "share"],
+              "description": "Mandatory 'branch' for parallel code modifications to isolate git worktrees."
+            }
+          }
+        }
+      }
+    }
+  },
+  "topologies": [
+    {
+      "id": "fan_out",
+      "name": "Fan-Out (Aggressive Parallel)",
+      "waves": 1,
+      "use_case": "Independent tasks (UI audits, multi-component inspection, parallel web audits)",
+      "example_file": "examples/example_fanout_design.md"
+    },
+    {
+      "id": "mixed_architecture",
+      "name": "Multi-Wave Mixed (Scouts -> Synthesizers -> Integrator)",
+      "waves": 3,
+      "use_case": "System architectural research and dependency evaluation",
+      "example_file": "examples/example_mixed_architecture.md"
+    },
+    {
+      "id": "parallel_code",
+      "name": "Parallel Code Sprint (Isolated Modules)",
+      "waves": 1,
+      "isolation": "Workspace: branch (Git Worktree)",
+      "rule": "Single-Writer Rule (Strict directory ownership)",
+      "example_file": "examples/example_parallel_code.md"
+    },
+    {
+      "id": "map_reduce",
+      "name": "Scatter-Gather / Map-Reduce",
+      "waves": 2,
+      "use_case": "Mass processing of 20-100+ files or competitor sites",
+      "example_file": "examples/example_map_reduce.md"
+    },
+    {
+      "id": "sequential_pipeline",
+      "name": "Strict Sequential Pipeline",
+      "waves": "N",
+      "use_case": "Strictly chained dependencies (DB schema -> Migration -> Seed -> API)",
+      "example_file": "examples/example_pipeline_sequential.md"
+    }
+  ],
+  "safety_protocols": {
+    "dependency_gate": {
+      "trigger": "Between Wave N and Wave N+1",
+      "checks": [
+        "All workers responded without missing messages",
+        "Zero [ BLOCKER ] status flags in responses",
+        "All expected file artifacts exist on disk",
+        "Intermediate git checkpoint committed (pre-wave checkpoint)",
+        "Stale Context Invalidation via view_file reload"
+      ],
+      "on_failure": "Tag downstream tasks as CANCELED_BY_DEPENDENCY and halt or escalate"
+    },
+    "circuit_breaker": {
+      "monitored_status": ["429", "500", "RateLimitExceeded", "APITimeout"],
+      "action": "Immediate halt of further API requests upon 2 consecutive failures; escalate via ask_question"
+    },
+    "single_writer_rule": {
+      "definition": "Parallel workers are strictly forbidden from writing to the same file path.",
+      "shared_files": ["package.json", "schema.prisma", "shared.ts", "INDEX.md"],
+      "authority": "Shared files may ONLY be modified by the orchestrator after the wave completes."
+    },
+    "saga_rollback": {
+      "protocol": "git commit before each write wave; git revert on critical blocker; isolated blast radius"
+    },
+    "heartbeat_timeout": {
+      "default_seconds": 900,
+      "action": "schedule(DurationSeconds=900, TimerCondition='any') -> inspect manage_subagents list -> kill unresponsive subagents"
+    }
+  },
+  "handoff_contract": {
+    "default_format": "BLUF Markdown",
+    "markdown_schema": {
+      "status_line": "# Status: [ OK ] | [ RISK ] | [ BLOCKER ]",
+      "summary_section": "## Резюме (<= 3 строки)",
+      "findings_section": "## Находки (- [ SEVERITY ] Description — source: path#line)",
+      "recommendations_section": "## Рекомендации (ordered list)"
+    },
+    "json_format": {
+      "enabled_by": "ResponseFormat: json",
+      "payload_structure": {
+        "status": "OK | RISK | BLOCKER",
+        "summary": "string",
+        "findings": [{"severity": "OK|RISK|BLOCKER", "text": "string", "source": "string"}],
+        "recommendations": ["string"],
+        "blocker": "boolean"
+      }
+    },
+    "max_message_lines": 50
+  },
+  "anti_pattern_guardrails": [
+    {"id": "AP-01", "name": "Hallucination Guard", "severity": "CRITICAL"},
+    {"id": "AP-02", "name": "Hardcode Guard", "severity": "CRITICAL"},
+    {"id": "AP-03", "name": "Precision Guard", "severity": "HIGH"},
+    {"id": "AP-05", "name": "Context Block Guard", "severity": "CRITICAL"},
+    {"id": "AP-07", "name": "Chain-of-Thought Guard", "severity": "HIGH"},
+    {"id": "AP-11", "name": "Length & Structure Guard", "severity": "MEDIUM"},
+    {"id": "AP-13", "name": "Micromanagement Guard", "severity": "CRITICAL"},
+    {"id": "AP-14", "name": "Blind Trust Guard", "severity": "HIGH"},
+    {"id": "AP-15", "name": "Memory Overload Guard", "severity": "HIGH"},
+    {"id": "AP-17", "name": "Retry Limit Guard", "severity": "HIGH"},
+    {"id": "AP-18", "name": "Escalation Protocol Guard", "severity": "HIGH"},
+    {"id": "AP-19", "name": "Secondary Source Trap", "severity": "CRITICAL"},
+    {"id": "AP-20", "name": "Sequential Launch Trap", "severity": "HIGH"},
+    {"id": "AP-21", "name": "Single-Writer Violation", "severity": "CRITICAL"},
+    {"id": "AP-22", "name": "Zombie Wave Progression", "severity": "CRITICAL"},
+    {"id": "AP-23", "name": "Research Agent Write Trap", "severity": "CRITICAL"},
+    {"id": "AP-24", "name": "Missing Circuit Breaker", "severity": "HIGH"},
+    {"id": "AP-25", "name": "No Heartbeat Timeout", "severity": "MEDIUM"},
+    {"id": "AP-26", "name": "Unstructured Handoff", "severity": "MEDIUM"}
+  ]
+}

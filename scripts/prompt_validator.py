@@ -33,6 +33,10 @@ def check_ap01_hallucination(text: str) -> dict:
         "не выдумывай",
         "не придумывай",
         "из файлов",
+        "DATA NOT FOUND",
+        "source:",
+        "ONLY based on data",
+        "do not fabricate"
     ]
     found = [m for m in markers if m.lower() in text.lower()]
     passed = len(found) >= 2
@@ -88,6 +92,11 @@ def check_ap03_precision(text: str) -> dict:
         "перечитай задачу",
         "все пункты выполнены",
         "лишних",
+        "exactly",
+        "only",
+        "do not add",
+        "reread the task",
+        "all items completed"
     ]
     found = [m for m in markers if m.lower() in text.lower()]
     passed = len(found) >= 2
@@ -133,9 +142,9 @@ def check_ap04_negative(text: str) -> dict:
 
 def check_ap05_context(text: str) -> dict:
     """AP-05: Отсутствие контекстного блока."""
-    has_reads = bool(re.search(r"(?i)(прочитай|reads|📥|входн)", text))
-    has_writes = bool(re.search(r"(?i)(результат|writes|📤|выходн|выход)", text))
-    has_index = bool(re.search(r"(?i)(разметка|index|🏷️|тег[иа])", text))
+    has_reads = bool(re.search(r"(?i)(прочитай|reads|📥|входн|read)", text))
+    has_writes = bool(re.search(r"(?i)(результат|writes|📤|выходн|выход|output|result)", text))
+    has_index = bool(re.search(r"(?i)(разметка|index|🏷️|тег[иа]|markup|tags)", text))
     
     score = sum([has_reads, has_writes, has_index])
     passed = score >= 2
@@ -184,6 +193,9 @@ def check_ap07_cot(text: str) -> dict:
         "step-by-step",
         "пошагов",
         "перед принятием решения",
+        "chain of thought",
+        "before deciding",
+        "step by step"
     ]
     found = [m for m in markers if m.lower() in text.lower()]
     passed = len(found) >= 1
@@ -268,14 +280,19 @@ def check_ap11_length(text: str) -> dict:
     word_count = len(text.split())
     has_structure = bool(re.search(r"(#{1,3}\s|<\w+>|\[БЛОК|📥|📤|🏷️)", text))
     
-    passed = word_count <= 2000 or has_structure
+    if word_count <= 2000:
+        passed = True
+    elif word_count <= 4000 and has_structure:
+        passed = True
+    else:
+        passed = False
     return {
         "id": "AP-11",
         "name": "Length & Structure",
         "severity": "MEDIUM",
         "passed": passed,
         "detail": f"Слов: {word_count}, Структура: {'✓' if has_structure else '✗'}"
-                  + ("" if passed else ". Разбей на XML/Markdown блоки"),
+                  + ("" if passed else ". Разбей на XML/Markdown блоки и сократи промпт"),
     }
 
 
@@ -398,9 +415,112 @@ def check_ap18_escalation(text: str) -> dict:
     }
 
 
+def check_ap19_original_specs(text: str) -> dict:
+    """AP-19: Secondary Source Trap."""
+    has_primary = bool(re.search(r"(?i)(MANDATORY READ|ПЕРВОИСТОЧНИК|оригинал|docs/)", text))
+    has_secondary = bool(re.search(r"(?i)(kontext/|саммари|пересказ)", text))
+    
+    passed = not (has_secondary and not has_primary)
+    return {
+        "id": "AP-19",
+        "name": "Secondary Source Trap",
+        "severity": "CRITICAL",
+        "passed": passed,
+        "detail": "Пройдено" if passed else "Найдена отсылка к вторичному контексту без первоисточника (MANDATORY READ/docs/).",
+    }
+
+def check_ap21_write_isolation(text: str) -> dict:
+    """AP-21: Single-Writer Guard."""
+    has_isolation = bool(re.search(r"(?i)(WriteTargets|изолированн|только в свою папку|single-writer|Workspace|worktree|branch)", text))
+    has_self_parallel = bool(re.search(r"(?i)TypeName.*self", text)) and bool(re.search(r"(?i)(Subagents\s*(?:\[|:)|зависимост|волна|wave|параллельн)", text))
+    
+    passed = not (has_self_parallel and not has_isolation)
+    return {
+        "id": "AP-21",
+        "name": "Write Isolation Guard",
+        "severity": "HIGH",
+        "passed": passed,
+        "detail": "Пройдено" if passed else "Параллельный запуск агентов 'self' без правил изоляции записи (WriteTargets/Workspace).",
+    }
+
+def check_ap20_parallel_launch(text: str) -> dict:
+    """AP-20: Sequential Launch Trap (Проверка на параллельный запуск агентов)."""
+    # Если промпт не содержит invoke_subagent, проверка не имеет смысла
+    if not re.search(r"(?i)invoke_subagent", text):
+        return {
+            "id": "AP-20",
+            "name": "Parallel Launch Guard",
+            "severity": "HIGH",
+            "passed": True,
+            "detail": "Нет вызовов invoke_subagent, проверка пропущена."
+        }
+
+    has_array = bool(re.search(r"(?i)Subagents\s*(?:\[|:)", text))
+    has_wave = bool(re.search(r"(?i)(зависимост|волна|wave|параллельн)", text))
+    
+    passed = has_array or has_wave
+    return {
+        "id": "AP-20",
+        "name": "Parallel Launch Guard",
+        "severity": "HIGH",
+        "passed": passed,
+        "detail": "Найден массив Subagents[] или граф зависимостей" if passed
+                  else "Ловушка последовательного запуска (AP-20). Добавьте массив Subagents[] и таблицу графа зависимостей.",
+    }
+
+
 # ═══════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════
+
+def check_ap24_circuit_breaker(text: str) -> dict:
+    """AP-24: Circuit Breaker for External APIs."""
+    api_patterns = [r"(?i)search_web", r"(?i)read_url", r"(?i)playwright", r"(?i)browser_", r"(?i)API", r"(?i)fetch", r"(?i)scraping", r"(?i)scraper", r"(?i)парсинг", r"(?i)Директ", r"(?i)Метрик"]
+    cb_patterns = [r"(?i)429", r"(?i)500", r"(?i)retry", r"(?i)повтор", r"(?i)лимит\s+запросов", r"(?i)circuit\s+breaker", r"(?i)остановить\s+при\s+ошибке", r"(?i)rate\s+limit", r"(?i)не\s+повторяй", r"(?i)эскалируй\s+при\s+сбое\s+API"]
+    
+    has_api = any(re.search(p, text) for p in api_patterns)
+    has_cb = any(re.search(p, text) for p in cb_patterns)
+    
+    if not has_api:
+        passed = True
+        detail = "Внешние API не обнаружены, проверка пропущена."
+    elif has_cb:
+        passed = True
+        detail = "Пройдено. Инструкции Circuit Breaker найдены."
+    else:
+        passed = False
+        detail = "Промпт использует внешние API без инструкций Circuit Breaker (обработка 429/500). Добавь: 'При ошибке API 429/500 — СТОП, не шли повторные, эскалируй.'"
+        
+    return {
+        "id": "AP-24",
+        "name": "Circuit Breaker Guard",
+        "severity": "HIGH",
+        "passed": passed,
+        "detail": detail,
+    }
+
+def check_ap25_heartbeat_timeout(text: str) -> dict:
+    """AP-25: Heartbeat/Timeout for Subagents."""
+    if not re.search(r"(?i)invoke_subagent", text):
+        return {
+            "id": "AP-25",
+            "name": "Heartbeat Timeout Guard",
+            "severity": "MEDIUM",
+            "passed": True,
+            "detail": "Нет invoke_subagent, проверка пропущена."
+        }
+        
+    timeout_patterns = [r"(?i)schedule", r"(?i)таймер", r"(?i)timeout", r"(?i)тайм-аут", r"(?i)heartbeat", r"(?i)зависш", r"(?i)kill", r"(?i)дедлайн"]
+    has_timeout = any(re.search(p, text) for p in timeout_patterns)
+    
+    passed = has_timeout
+    return {
+        "id": "AP-25",
+        "name": "Heartbeat Timeout Guard",
+        "severity": "MEDIUM",
+        "passed": passed,
+        "detail": "Пройдено. Защита от зависаний найдена." if passed else "Нет защиты от зависших субагентов. Добавь: schedule(DurationSeconds=900) + kill при отсутствии ответа."
+    }
 
 def get_checks_for_mode(mode: str) -> list:
     checks = [
@@ -415,6 +535,8 @@ def get_checks_for_mode(mode: str) -> list:
         check_ap10_fewshot,
         check_ap11_length,
         check_ap12_validation,
+        check_ap19_original_specs,
+        check_ap24_circuit_breaker,
     ]
     if mode == "orchestrator":
         checks.extend([
@@ -423,7 +545,10 @@ def get_checks_for_mode(mode: str) -> list:
             check_ap15_memory_overload,
             check_ap16_sequence,
             check_ap17_retry_limit,
-            check_ap18_escalation
+            check_ap18_escalation,
+            check_ap20_parallel_launch,
+            check_ap21_write_isolation,
+            check_ap25_heartbeat_timeout
         ])
     else:
         checks.append(check_ap06_universal)
